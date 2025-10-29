@@ -261,6 +261,11 @@ func TestRawNameUnpack(t *testing.T) {
 			[]byte("\x04test\xc0\x00"),
 			7,
 		},
+		{
+			[]byte("\x0afirst.last\x07example\x03com\x00"),
+			[]byte("\x0afirst.last\x07example\x03com\x00"),
+			24,
+		},
 	}
 
 	for _, test := range tests {
