@@ -567,12 +567,25 @@ type Parser struct {
 	resHeaderOffset int
 	resHeaderType   Type
 	resHeaderLength uint16
+
+	rawNames bool
+}
+
+// EnableRawNames instructs the parser to not perform any processing on a
+// domain name and just return the raw bytes.
+//
+// This is useful for packages like mDNS, which do not follow the same
+// conventions as DNS.
+func (p *Parser) EnableRawNames() {
+	p.rawNames = true
 }
 
 // Start parses the header and enables the parsing of Questions.
 func (p *Parser) Start(msg []byte) (Header, error) {
 	if p.msg != nil {
+		old := *p
 		*p = Parser{}
+		p.rawNames = old.rawNames
 	}
 	p.msg = msg
 	var err error
@@ -607,7 +620,7 @@ func (p *Parser) resource(sec section) (Resource, error) {
 		return r, err
 	}
 	p.resHeaderValid = false
-	r.Body, p.off, err = unpackResourceBody(p.msg, p.off, r.Header)
+	r.Body, p.off, err = unpackResourceBody(p.msg, p.off, r.Header, p.rawNames)
 	if err != nil {
 		return Resource{}, &nestedError{"unpacking " + sectionNames[sec], err}
 	}
@@ -624,7 +637,7 @@ func (p *Parser) resourceHeader(sec section) (ResourceHeader, error) {
 		return ResourceHeader{}, err
 	}
 	var hdr ResourceHeader
-	off, err := hdr.unpack(p.msg, p.off)
+	off, err := hdr.unpack(p.msg, p.off, p.rawNames)
 	if err != nil {
 		return ResourceHeader{}, err
 	}
@@ -665,7 +678,7 @@ func (p *Parser) Question() (Question, error) {
 		return Question{}, err
 	}
 	var name Name
-	off, err := name.unpack(p.msg, p.off)
+	off, err := name.unpack(p.msg, p.off, p.rawNames)
 	if err != nil {
 		return Question{}, &nestedError{"unpacking Question.Name", err}
 	}
@@ -901,7 +914,7 @@ func (p *Parser) CNAMEResource() (CNAMEResource, error) {
 	if !p.resHeaderValid || p.resHeaderType != TypeCNAME {
 		return CNAMEResource{}, ErrNotStarted
 	}
-	r, err := unpackCNAMEResource(p.msg, p.off)
+	r, err := unpackCNAMEResource(p.msg, p.off, p.rawNames)
 	if err != nil {
 		return CNAMEResource{}, err
 	}
@@ -919,7 +932,7 @@ func (p *Parser) MXResource() (MXResource, error) {
 	if !p.resHeaderValid || p.resHeaderType != TypeMX {
 		return MXResource{}, ErrNotStarted
 	}
-	r, err := unpackMXResource(p.msg, p.off)
+	r, err := unpackMXResource(p.msg, p.off, p.rawNames)
 	if err != nil {
 		return MXResource{}, err
 	}
@@ -937,7 +950,7 @@ func (p *Parser) NSResource() (NSResource, error) {
 	if !p.resHeaderValid || p.resHeaderType != TypeNS {
 		return NSResource{}, ErrNotStarted
 	}
-	r, err := unpackNSResource(p.msg, p.off)
+	r, err := unpackNSResource(p.msg, p.off, p.rawNames)
 	if err != nil {
 		return NSResource{}, err
 	}
@@ -955,7 +968,7 @@ func (p *Parser) PTRResource() (PTRResource, error) {
 	if !p.resHeaderValid || p.resHeaderType != TypePTR {
 		return PTRResource{}, ErrNotStarted
 	}
-	r, err := unpackPTRResource(p.msg, p.off)
+	r, err := unpackPTRResource(p.msg, p.off, p.rawNames)
 	if err != nil {
 		return PTRResource{}, err
 	}
@@ -973,7 +986,7 @@ func (p *Parser) SOAResource() (SOAResource, error) {
 	if !p.resHeaderValid || p.resHeaderType != TypeSOA {
 		return SOAResource{}, ErrNotStarted
 	}
-	r, err := unpackSOAResource(p.msg, p.off)
+	r, err := unpackSOAResource(p.msg, p.off, p.rawNames)
 	if err != nil {
 		return SOAResource{}, err
 	}
@@ -1009,7 +1022,7 @@ func (p *Parser) SRVResource() (SRVResource, error) {
 	if !p.resHeaderValid || p.resHeaderType != TypeSRV {
 		return SRVResource{}, ErrNotStarted
 	}
-	r, err := unpackSRVResource(p.msg, p.off)
+	r, err := unpackSRVResource(p.msg, p.off, p.rawNames)
 	if err != nil {
 		return SRVResource{}, err
 	}
@@ -1713,10 +1726,10 @@ func (h *ResourceHeader) pack(oldMsg []byte, compression map[string]uint16, comp
 	return msg, lenOff, nil
 }
 
-func (h *ResourceHeader) unpack(msg []byte, off int) (int, error) {
+func (h *ResourceHeader) unpack(msg []byte, off int, raw bool) (int, error) {
 	newOff := off
 	var err error
-	if newOff, err = h.Name.unpack(msg, newOff); err != nil {
+	if newOff, err = h.Name.unpack(msg, newOff, raw); err != nil {
 		return off, &nestedError{"Name", err}
 	}
 	if h.Type, newOff, err = unpackType(msg, newOff); err != nil {
@@ -1933,6 +1946,7 @@ const nonEncodedNameMax = 254
 type Name struct {
 	Data   [255]byte
 	Length uint8
+	IsRaw  bool
 }
 
 // NewName creates a new Name from a string.
@@ -1958,6 +1972,9 @@ func MustNewName(name string) Name {
 //
 // Note: characters inside the labels are not escaped in any way.
 func (n Name) String() string {
+	if n.IsRaw {
+		return printString(n.Data[:n.Length])
+	}
 	return string(n.Data[:n.Length])
 }
 
@@ -2045,7 +2062,7 @@ func (n *Name) pack(msg []byte, compression map[string]uint16, compressionOff in
 }
 
 // unpack unpacks a domain name.
-func (n *Name) unpack(msg []byte, off int) (int, error) {
+func (n *Name) unpack(msg []byte, off int, raw bool) (int, error) {
 	// currOff is the current working offset.
 	currOff := off
 
@@ -2060,7 +2077,40 @@ func (n *Name) unpack(msg []byte, off int) (int, error) {
 	// Name is a slice representation of the name data.
 	name := n.Data[:0]
 
-Loop:
+	n.IsRaw = raw
+	if raw {
+	rawLoop:
+		for {
+			if currOff >= len(msg) {
+				return off, errBaseLen
+			}
+			c := int(msg[currOff])
+			switch c & 0xC0 {
+			case 0x00: // String segment
+				if c == 0x00 {
+					name = append(name, msg[off:currOff+1]...)
+					currOff++
+					break rawLoop
+				}
+				currOff += 1 + c
+			case 0xC0: // Pointer
+				name = append(name, msg[off:currOff+2]...)
+				currOff += 2
+				break rawLoop
+			default:
+				// Prefixes 0x80 and 0x40 are reserved.
+				return off, errReserved
+			}
+		}
+
+		if len(name) > len(n.Data) {
+			return off, errNameTooLong
+		}
+		n.Length = uint8(len(name))
+		return currOff, nil
+	}
+
+loop:
 	for {
 		if currOff >= len(msg) {
 			return off, errBaseLen
@@ -2071,7 +2121,7 @@ Loop:
 		case 0x00: // String segment
 			if c == 0x00 {
 				// A zero length signals the end of the name.
-				break Loop
+				break loop
 			}
 			endOff := currOff + c
 			if endOff > len(msg) {
@@ -2187,7 +2237,7 @@ func (q *Question) GoString() string {
 		"Class: " + q.Class.GoString() + "}"
 }
 
-func unpackResourceBody(msg []byte, off int, hdr ResourceHeader) (ResourceBody, int, error) {
+func unpackResourceBody(msg []byte, off int, hdr ResourceHeader, raw bool) (ResourceBody, int, error) {
 	var (
 		r    ResourceBody
 		err  error
@@ -2201,27 +2251,27 @@ func unpackResourceBody(msg []byte, off int, hdr ResourceHeader) (ResourceBody, 
 		name = "A"
 	case TypeNS:
 		var rb NSResource
-		rb, err = unpackNSResource(msg, off)
+		rb, err = unpackNSResource(msg, off, raw)
 		r = &rb
 		name = "NS"
 	case TypeCNAME:
 		var rb CNAMEResource
-		rb, err = unpackCNAMEResource(msg, off)
+		rb, err = unpackCNAMEResource(msg, off, raw)
 		r = &rb
 		name = "CNAME"
 	case TypeSOA:
 		var rb SOAResource
-		rb, err = unpackSOAResource(msg, off)
+		rb, err = unpackSOAResource(msg, off, raw)
 		r = &rb
 		name = "SOA"
 	case TypePTR:
 		var rb PTRResource
-		rb, err = unpackPTRResource(msg, off)
+		rb, err = unpackPTRResource(msg, off, raw)
 		r = &rb
 		name = "PTR"
 	case TypeMX:
 		var rb MXResource
-		rb, err = unpackMXResource(msg, off)
+		rb, err = unpackMXResource(msg, off, raw)
 		r = &rb
 		name = "MX"
 	case TypeTXT:
@@ -2236,17 +2286,17 @@ func unpackResourceBody(msg []byte, off int, hdr ResourceHeader) (ResourceBody, 
 		name = "AAAA"
 	case TypeSRV:
 		var rb SRVResource
-		rb, err = unpackSRVResource(msg, off)
+		rb, err = unpackSRVResource(msg, off, raw)
 		r = &rb
 		name = "SRV"
 	case TypeSVCB:
 		var rb SVCBResource
-		rb, err = unpackSVCBResource(msg, off, hdr.Length)
+		rb, err = unpackSVCBResource(msg, off, hdr.Length, raw)
 		r = &rb
 		name = "SVCB"
 	case TypeHTTPS:
 		var rb HTTPSResource
-		rb.SVCBResource, err = unpackSVCBResource(msg, off, hdr.Length)
+		rb.SVCBResource, err = unpackSVCBResource(msg, off, hdr.Length, raw)
 		r = &rb
 		name = "HTTPS"
 	case TypeOPT:
@@ -2285,9 +2335,9 @@ func (r *CNAMEResource) GoString() string {
 	return "dnsmessage.CNAMEResource{CNAME: " + r.CNAME.GoString() + "}"
 }
 
-func unpackCNAMEResource(msg []byte, off int) (CNAMEResource, error) {
+func unpackCNAMEResource(msg []byte, off int, raw bool) (CNAMEResource, error) {
 	var cname Name
-	if _, err := cname.unpack(msg, off); err != nil {
+	if _, err := cname.unpack(msg, off, raw); err != nil {
 		return CNAMEResource{}, err
 	}
 	return CNAMEResource{cname}, nil
@@ -2321,13 +2371,13 @@ func (r *MXResource) GoString() string {
 		"MX: " + r.MX.GoString() + "}"
 }
 
-func unpackMXResource(msg []byte, off int) (MXResource, error) {
+func unpackMXResource(msg []byte, off int, raw bool) (MXResource, error) {
 	pref, off, err := unpackUint16(msg, off)
 	if err != nil {
 		return MXResource{}, &nestedError{"Pref", err}
 	}
 	var mx Name
-	if _, err := mx.unpack(msg, off); err != nil {
+	if _, err := mx.unpack(msg, off, raw); err != nil {
 		return MXResource{}, &nestedError{"MX", err}
 	}
 	return MXResource{pref, mx}, nil
@@ -2352,9 +2402,9 @@ func (r *NSResource) GoString() string {
 	return "dnsmessage.NSResource{NS: " + r.NS.GoString() + "}"
 }
 
-func unpackNSResource(msg []byte, off int) (NSResource, error) {
+func unpackNSResource(msg []byte, off int, raw bool) (NSResource, error) {
 	var ns Name
-	if _, err := ns.unpack(msg, off); err != nil {
+	if _, err := ns.unpack(msg, off, raw); err != nil {
 		return NSResource{}, err
 	}
 	return NSResource{ns}, nil
@@ -2379,9 +2429,9 @@ func (r *PTRResource) GoString() string {
 	return "dnsmessage.PTRResource{PTR: " + r.PTR.GoString() + "}"
 }
 
-func unpackPTRResource(msg []byte, off int) (PTRResource, error) {
+func unpackPTRResource(msg []byte, off int, raw bool) (PTRResource, error) {
 	var ptr Name
-	if _, err := ptr.unpack(msg, off); err != nil {
+	if _, err := ptr.unpack(msg, off, raw); err != nil {
 		return PTRResource{}, err
 	}
 	return PTRResource{ptr}, nil
@@ -2436,14 +2486,14 @@ func (r *SOAResource) GoString() string {
 		"MinTTL: " + printUint32(r.MinTTL) + "}"
 }
 
-func unpackSOAResource(msg []byte, off int) (SOAResource, error) {
+func unpackSOAResource(msg []byte, off int, raw bool) (SOAResource, error) {
 	var ns Name
-	off, err := ns.unpack(msg, off)
+	off, err := ns.unpack(msg, off, raw)
 	if err != nil {
 		return SOAResource{}, &nestedError{"NS", err}
 	}
 	var mbox Name
-	if off, err = mbox.unpack(msg, off); err != nil {
+	if off, err = mbox.unpack(msg, off, raw); err != nil {
 		return SOAResource{}, &nestedError{"MBox", err}
 	}
 	serial, off, err := unpackUint32(msg, off)
@@ -2556,7 +2606,7 @@ func (r *SRVResource) GoString() string {
 		"Target: " + r.Target.GoString() + "}"
 }
 
-func unpackSRVResource(msg []byte, off int) (SRVResource, error) {
+func unpackSRVResource(msg []byte, off int, raw bool) (SRVResource, error) {
 	priority, off, err := unpackUint16(msg, off)
 	if err != nil {
 		return SRVResource{}, &nestedError{"Priority", err}
@@ -2570,7 +2620,7 @@ func unpackSRVResource(msg []byte, off int) (SRVResource, error) {
 		return SRVResource{}, &nestedError{"Port", err}
 	}
 	var target Name
-	if _, err := target.unpack(msg, off); err != nil {
+	if _, err := target.unpack(msg, off, raw); err != nil {
 		return SRVResource{}, &nestedError{"Target", err}
 	}
 	return SRVResource{priority, weight, port, target}, nil

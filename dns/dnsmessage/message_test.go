@@ -214,9 +214,71 @@ func TestName(t *testing.T) {
 func TestNameWithDotsUnpack(t *testing.T) {
 	name := []byte{3, 'w', '.', 'w', 2, 'g', 'o', 3, 'd', 'e', 'v', 0}
 	var n Name
-	_, err := n.unpack(name, 0)
+	_, err := n.unpack(name, 0, false)
 	if err != errInvalidName {
 		t.Fatalf("expected %v, got %v", errInvalidName, err)
+	}
+}
+
+func TestRawNameString(t *testing.T) {
+	var n Name
+	off, err := n.unpack([]byte("\x04test\x00"), 0, true)
+	if err != nil {
+		t.Fatalf("unpack() = _, %v", err)
+	}
+	if off != 6 {
+		t.Fatalf("unpack() = %d, _, want 6", off)
+	}
+	const want = `\x04test\x00`
+	if s := n.String(); s != want {
+		t.Errorf("String() = %q, want %q", s, want)
+	}
+}
+
+func TestRawNameUnpack(t *testing.T) {
+	tests := []struct {
+		in   []byte
+		name []byte
+		off  int
+	}{
+		{
+			[]byte("\x04test\x00"),
+			[]byte("\x04test\x00"),
+			6,
+		},
+		{
+			[]byte("\x04test\x05case1\x00"),
+			[]byte("\x04test\x05case1\x00"),
+			12,
+		},
+		{
+			[]byte("\x04test\x05case2\x00extra"),
+			[]byte("\x04test\x05case2\x00"),
+			12,
+		},
+		{
+			[]byte("\x04test\xc0\x00"),
+			[]byte("\x04test\xc0\x00"),
+			7,
+		},
+	}
+
+	for _, test := range tests {
+		var n Name
+		off, err := n.unpack(test.in, 0, true)
+		if err != nil {
+			t.Errorf("unpack(%q, 0, true) = _, %v", test.in, err)
+			continue
+		}
+		if off != test.off {
+			t.Errorf("unpack(%q, 0, true) = %d, _, want %d", test.in, off, test.off)
+		}
+		if !bytes.Equal(n.Data[:n.Length], test.name) {
+			t.Errorf("unpack(%q, 0, true) name = %q, want %q", test.in, n.Data[:n.Length], test.name)
+		}
+		if !n.IsRaw {
+			t.Errorf("unpack(%q, 0, true) IsRaw = false, want true", test.in)
+		}
 	}
 }
 
@@ -252,7 +314,7 @@ func TestNamePackUnpack(t *testing.T) {
 			continue
 		}
 		var got Name
-		n, err := got.unpack(buf, 0)
+		n, err := got.unpack(buf, 0, false)
 		if err != nil {
 			t.Errorf("%q.unpack() = %v", test.in, err)
 			continue
@@ -296,7 +358,7 @@ func TestNameUnpackTooLongName(t *testing.T) {
 
 	for i, test := range tests {
 		var got Name
-		_, err := got.unpack(test.name, 0)
+		_, err := got.unpack(test.name, 0, false)
 		if err != test.err {
 			t.Errorf("%v: %v: expected error: %v, got %v", i, test.name, test.err, err)
 		}
@@ -423,6 +485,7 @@ func TestDNSPackUnpack(t *testing.T) {
 		largeTestMsg(),
 		buildTestSVCBMsg(),
 	}
+
 	for i, want := range wants {
 		b, err := want.Pack()
 		if err != nil {
@@ -443,6 +506,23 @@ func TestDNSPackUnpack(t *testing.T) {
 				}
 			}
 		}
+	}
+
+	b, err := wants[0].Pack()
+	if err != nil {
+		t.Fatalf("Message.Pack() = %v", err)
+	}
+	var p Parser
+	p.EnableRawNames()
+	if _, err := p.Start(b); err != nil {
+		t.Fatalf("Parser.Start() = %v", err)
+	}
+	q, err := p.Question()
+	if err != nil {
+		t.Fatalf("Parser.Question() = %v", err)
+	}
+	if !q.Name.IsRaw {
+		t.Errorf("Name.IsRaw = false, want true")
 	}
 }
 
@@ -657,11 +737,11 @@ func TestVeryLongTxt(t *testing.T) {
 		t.Fatal("Resource.pack() =", err)
 	}
 	var got Resource
-	off, err := got.Header.unpack(buf, 0)
+	off, err := got.Header.unpack(buf, 0, false)
 	if err != nil {
 		t.Fatal("ResourceHeader.unpack() =", err)
 	}
-	body, n, err := unpackResourceBody(buf, off, got.Header)
+	body, n, err := unpackResourceBody(buf, off, got.Header, false)
 	if err != nil {
 		t.Fatal("unpackResourceBody() =", err)
 	}
@@ -965,7 +1045,7 @@ func TestResourcePackLength(t *testing.T) {
 	}
 
 	var hdr ResourceHeader
-	if _, err := hdr.unpack(buf, 0); err != nil {
+	if _, err := hdr.unpack(buf, 0, false); err != nil {
 		t.Fatal("ResourceHeader.unpack() =", err)
 	}
 

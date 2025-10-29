@@ -23,7 +23,7 @@ func TestSVCBParamsRoundTrip(t *testing.T) {
 		if err != nil {
 			t.Fatalf("pack() = %v", err)
 		}
-		got, n, err := unpackResourceBody(buf, 0, ResourceHeader{Type: TypeSVCB, Length: uint16(len(buf))})
+		got, n, err := unpackResourceBody(buf, 0, ResourceHeader{Type: TypeSVCB, Length: uint16(len(buf))}, false)
 		if err != nil {
 			t.Fatalf("unpackResourceBody() = %v", err)
 		}
@@ -175,7 +175,7 @@ func TestSVCBParams(t *testing.T) {
 
 func TestSVCBWireFormat(t *testing.T) {
 	testRecord := func(bytesInput []byte, parsedInput *SVCBResource) {
-		parsedOutput, n, err := unpackResourceBody(bytesInput, 0, ResourceHeader{Type: TypeSVCB, Length: uint16(len(bytesInput))})
+		parsedOutput, n, err := unpackResourceBody(bytesInput, 0, ResourceHeader{Type: TypeSVCB, Length: uint16(len(bytesInput))}, false)
 		if err != nil {
 			t.Fatalf("unpackResourceBody() = %v", err)
 		}

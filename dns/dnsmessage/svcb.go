@@ -186,84 +186,13 @@ func (r *SVCBResource) pack(msg []byte, _ map[string]uint16, _ int) ([]byte, err
 	return msg, nil
 }
 
-func unpackSVCBResource(msg []byte, off int, length uint16) (SVCBResource, error) {
-	// Wire format reference: https://www.rfc-editor.org/rfc/rfc9460.html#section-2.2.
-	r := SVCBResource{}
-	paramsOff := off
-	bodyEnd := off + int(length)
-
-	var err error
-	if r.Priority, paramsOff, err = unpackUint16(msg, paramsOff); err != nil {
-		return SVCBResource{}, &nestedError{"Priority", err}
-	}
-
-	if paramsOff, err = r.Target.unpack(msg, paramsOff); err != nil {
-		return SVCBResource{}, &nestedError{"Target", err}
-	}
-
-	// Two-pass parsing to avoid allocations.
-	// First, count the number of params.
-	n := 0
-	var totalValueLen uint16
-	off = paramsOff
-	var previousKey uint16
-	for off < bodyEnd {
-		var key, len uint16
-		if key, off, err = unpackUint16(msg, off); err != nil {
-			return SVCBResource{}, &nestedError{"Params key", err}
-		}
-		if n > 0 && key <= previousKey {
-			// As per https://www.rfc-editor.org/rfc/rfc9460.html#section-2.2, clients MUST
-			// consider the RR malformed if the SvcParamKeys are not in strictly increasing numeric order
-			return SVCBResource{}, &nestedError{"Params", errParamOutOfOrder}
-		}
-		if len, off, err = unpackUint16(msg, off); err != nil {
-			return SVCBResource{}, &nestedError{"Params value length", err}
-		}
-		if off+int(len) > bodyEnd {
-			return SVCBResource{}, errResourceLen
-		}
-		totalValueLen += len
-		off += int(len)
-		n++
-	}
-	if off != bodyEnd {
-		return SVCBResource{}, errResourceLen
-	}
-
-	// Second, fill in the params.
-	r.Params = make([]SVCParam, n)
-	// valuesBuf is used to hold all param values to reduce allocations.
-	// Each param's Value slice will point into this buffer.
-	valuesBuf := make([]byte, totalValueLen)
-	off = paramsOff
-	for i := 0; i < n; i++ {
-		p := &r.Params[i]
-		var key, len uint16
-		if key, off, err = unpackUint16(msg, off); err != nil {
-			return SVCBResource{}, &nestedError{"param key", err}
-		}
-		p.Key = SVCParamKey(key)
-		if len, off, err = unpackUint16(msg, off); err != nil {
-			return SVCBResource{}, &nestedError{"param length", err}
-		}
-		if copy(valuesBuf, msg[off:off+int(len)]) != int(len) {
-			return SVCBResource{}, &nestedError{"param value", errCalcLen}
-		}
-		p.Value = valuesBuf[:len:len]
-		valuesBuf = valuesBuf[len:]
-		off += int(len)
-	}
-
-	return r, nil
-}
 
 // genericSVCBResource parses a single Resource Record compatible with SVCB.
 func (p *Parser) genericSVCBResource(svcbType Type) (SVCBResource, error) {
 	if !p.resHeaderValid || p.resHeaderType != svcbType {
 		return SVCBResource{}, ErrNotStarted
 	}
-	r, err := unpackSVCBResource(p.msg, p.off, p.resHeaderLength)
+	r, err := unpackSVCBResource(p.msg, p.off, p.resHeaderLength, p.rawNames)
 	if err != nil {
 		return SVCBResource{}, err
 	}
@@ -326,4 +255,76 @@ func (b *Builder) SVCBResource(h ResourceHeader, r SVCBResource) error {
 func (b *Builder) HTTPSResource(h ResourceHeader, r HTTPSResource) error {
 	h.Type = r.realType()
 	return b.genericSVCBResource(h, r.SVCBResource)
+}
+
+func unpackSVCBResource(msg []byte, off int, length uint16, raw bool) (SVCBResource, error) {
+	// Wire format reference: https://www.rfc-editor.org/rfc/rfc9460.html#section-2.2.
+	r := SVCBResource{}
+	paramsOff := off
+	bodyEnd := off + int(length)
+
+	var err error
+	if r.Priority, paramsOff, err = unpackUint16(msg, paramsOff); err != nil {
+		return SVCBResource{}, &nestedError{"Priority", err}
+	}
+
+	if paramsOff, err = r.Target.unpack(msg, paramsOff, raw); err != nil {
+		return SVCBResource{}, &nestedError{"Target", err}
+	}
+
+	// Two-pass parsing to avoid allocations.
+	// First, count the number of params.
+	n := 0
+	var totalValueLen uint16
+	off = paramsOff
+	var previousKey uint16
+	for off < bodyEnd {
+		var key, len uint16
+		if key, off, err = unpackUint16(msg, off); err != nil {
+			return SVCBResource{}, &nestedError{"Params key", err}
+		}
+		if n > 0 && key <= previousKey {
+			// As per https://www.rfc-editor.org/rfc/rfc9460.html#section-2.2, clients MUST
+			// consider the RR malformed if the SvcParamKeys are not in strictly increasing numeric order
+			return SVCBResource{}, &nestedError{"Params", errParamOutOfOrder}
+		}
+		if len, off, err = unpackUint16(msg, off); err != nil {
+			return SVCBResource{}, &nestedError{"Params value length", err}
+		}
+		if off+int(len) > bodyEnd {
+			return SVCBResource{}, errResourceLen
+		}
+		totalValueLen += len
+		off += int(len)
+		n++
+	}
+	if off != bodyEnd {
+		return SVCBResource{}, errResourceLen
+	}
+
+	// Second, fill in the params.
+	r.Params = make([]SVCParam, n)
+	// valuesBuf is used to hold all param values to reduce allocations.
+	// Each param's Value slice will point into this buffer.
+	valuesBuf := make([]byte, totalValueLen)
+	off = paramsOff
+	for i := 0; i < n; i++ {
+		p := &r.Params[i]
+		var key, len uint16
+		if key, off, err = unpackUint16(msg, off); err != nil {
+			return SVCBResource{}, &nestedError{"param key", err}
+		}
+		p.Key = SVCParamKey(key)
+		if len, off, err = unpackUint16(msg, off); err != nil {
+			return SVCBResource{}, &nestedError{"param length", err}
+		}
+		if copy(valuesBuf, msg[off:off+int(len)]) != int(len) {
+			return SVCBResource{}, &nestedError{"param value", errCalcLen}
+		}
+		p.Value = valuesBuf[:len:len]
+		valuesBuf = valuesBuf[len:]
+		off += int(len)
+	}
+
+	return r, nil
 }
