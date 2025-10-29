@@ -186,7 +186,6 @@ func (r *SVCBResource) pack(msg []byte, _ map[string]uint16, _ int) ([]byte, err
 	return msg, nil
 }
 
-
 func unpackSVCBResource(msg []byte, off int, length uint16, raw bool) (SVCBResource, error) {
 	// Wire format reference: https://www.rfc-editor.org/rfc/rfc9460.html#section-2.2.
 	r := SVCBResource{}
