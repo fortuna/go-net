@@ -187,76 +187,6 @@ func (r *SVCBResource) pack(msg []byte, _ map[string]uint16, _ int) ([]byte, err
 }
 
 
-// genericSVCBResource parses a single Resource Record compatible with SVCB.
-func (p *Parser) genericSVCBResource(svcbType Type) (SVCBResource, error) {
-	if !p.resHeaderValid || p.resHeaderType != svcbType {
-		return SVCBResource{}, ErrNotStarted
-	}
-	r, err := unpackSVCBResource(p.msg, p.off, p.resHeaderLength, p.rawNames)
-	if err != nil {
-		return SVCBResource{}, err
-	}
-	p.off += int(p.resHeaderLength)
-	p.resHeaderValid = false
-	p.index++
-	return r, nil
-}
-
-// SVCBResource parses a single SVCBResource.
-//
-// One of the XXXHeader methods must have been called before calling this
-// method.
-func (p *Parser) SVCBResource() (SVCBResource, error) {
-	return p.genericSVCBResource(TypeSVCB)
-}
-
-// HTTPSResource parses a single HTTPSResource.
-//
-// One of the XXXHeader methods must have been called before calling this
-// method.
-func (p *Parser) HTTPSResource() (HTTPSResource, error) {
-	svcb, err := p.genericSVCBResource(TypeHTTPS)
-	if err != nil {
-		return HTTPSResource{}, err
-	}
-	return HTTPSResource{svcb}, nil
-}
-
-// genericSVCBResource is the generic implementation for adding SVCB-like resources.
-func (b *Builder) genericSVCBResource(h ResourceHeader, r SVCBResource) error {
-	if err := b.checkResourceSection(); err != nil {
-		return err
-	}
-	msg, lenOff, err := h.pack(b.msg, b.compression, b.start)
-	if err != nil {
-		return &nestedError{"ResourceHeader", err}
-	}
-	preLen := len(msg)
-	if msg, err = r.pack(msg, b.compression, b.start); err != nil {
-		return &nestedError{"ResourceBody", err}
-	}
-	if err := h.fixLen(msg, lenOff, preLen); err != nil {
-		return err
-	}
-	if err := b.incrementSectionCount(); err != nil {
-		return err
-	}
-	b.msg = msg
-	return nil
-}
-
-// SVCBResource adds a single SVCBResource.
-func (b *Builder) SVCBResource(h ResourceHeader, r SVCBResource) error {
-	h.Type = r.realType()
-	return b.genericSVCBResource(h, r)
-}
-
-// HTTPSResource adds a single HTTPSResource.
-func (b *Builder) HTTPSResource(h ResourceHeader, r HTTPSResource) error {
-	h.Type = r.realType()
-	return b.genericSVCBResource(h, r.SVCBResource)
-}
-
 func unpackSVCBResource(msg []byte, off int, length uint16, raw bool) (SVCBResource, error) {
 	// Wire format reference: https://www.rfc-editor.org/rfc/rfc9460.html#section-2.2.
 	r := SVCBResource{}
@@ -327,4 +257,74 @@ func unpackSVCBResource(msg []byte, off int, length uint16, raw bool) (SVCBResou
 	}
 
 	return r, nil
+}
+
+// genericSVCBResource parses a single Resource Record compatible with SVCB.
+func (p *Parser) genericSVCBResource(svcbType Type) (SVCBResource, error) {
+	if !p.resHeaderValid || p.resHeaderType != svcbType {
+		return SVCBResource{}, ErrNotStarted
+	}
+	r, err := unpackSVCBResource(p.msg, p.off, p.resHeaderLength, p.rawNames)
+	if err != nil {
+		return SVCBResource{}, err
+	}
+	p.off += int(p.resHeaderLength)
+	p.resHeaderValid = false
+	p.index++
+	return r, nil
+}
+
+// SVCBResource parses a single SVCBResource.
+//
+// One of the XXXHeader methods must have been called before calling this
+// method.
+func (p *Parser) SVCBResource() (SVCBResource, error) {
+	return p.genericSVCBResource(TypeSVCB)
+}
+
+// HTTPSResource parses a single HTTPSResource.
+//
+// One of the XXXHeader methods must have been called before calling this
+// method.
+func (p *Parser) HTTPSResource() (HTTPSResource, error) {
+	svcb, err := p.genericSVCBResource(TypeHTTPS)
+	if err != nil {
+		return HTTPSResource{}, err
+	}
+	return HTTPSResource{svcb}, nil
+}
+
+// genericSVCBResource is the generic implementation for adding SVCB-like resources.
+func (b *Builder) genericSVCBResource(h ResourceHeader, r SVCBResource) error {
+	if err := b.checkResourceSection(); err != nil {
+		return err
+	}
+	msg, lenOff, err := h.pack(b.msg, b.compression, b.start)
+	if err != nil {
+		return &nestedError{"ResourceHeader", err}
+	}
+	preLen := len(msg)
+	if msg, err = r.pack(msg, b.compression, b.start); err != nil {
+		return &nestedError{"ResourceBody", err}
+	}
+	if err := h.fixLen(msg, lenOff, preLen); err != nil {
+		return err
+	}
+	if err := b.incrementSectionCount(); err != nil {
+		return err
+	}
+	b.msg = msg
+	return nil
+}
+
+// SVCBResource adds a single SVCBResource.
+func (b *Builder) SVCBResource(h ResourceHeader, r SVCBResource) error {
+	h.Type = r.realType()
+	return b.genericSVCBResource(h, r)
+}
+
+// HTTPSResource adds a single HTTPSResource.
+func (b *Builder) HTTPSResource(h ResourceHeader, r HTTPSResource) error {
+	h.Type = r.realType()
+	return b.genericSVCBResource(h, r.SVCBResource)
 }

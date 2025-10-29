@@ -761,6 +761,40 @@ func TestTooLongTxt(t *testing.T) {
 	}
 }
 
+func TestSOAResourceWithDot(t *testing.T) {
+	want := Resource{
+		ResourceHeader{
+			Name:  MustNewName("foo.bar.example.com."),
+			Type:  TypeSOA,
+			Class: ClassINET,
+		},
+		&SOAResource{
+			NS:   MustNewName("ns1.example.com."),
+			MBox: MustNewName("first\\.last.example.com."),
+		},
+	}
+	buf, err := want.pack(make([]byte, 0, 8000), map[string]uint16{}, 0)
+	if err != nil {
+		t.Fatal("Resource.pack() =", err)
+	}
+	var got Resource
+	off, err := got.Header.unpack(buf, 0, false)
+	if err != nil {
+		t.Fatal("ResourceHeader.unpack() =", err)
+	}
+	body, n, err := unpackResourceBody(buf, off, got.Header, false)
+	if err != nil {
+		t.Fatal("unpackResourceBody() =", err)
+	}
+	got.Body = body
+	if n != len(buf) {
+		t.Errorf("unpacked different amount than packed: got = %d, want = %d", n, len(buf))
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Resource.pack/unpack() roundtrip: got = %#v, want = %#v", got, want)
+	}
+}
+
 func TestStartAppends(t *testing.T) {
 	buf := make([]byte, 2, 514)
 	wantBuf := []byte{4, 44}
