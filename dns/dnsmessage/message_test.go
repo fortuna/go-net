@@ -220,6 +220,27 @@ func TestNameWithDotsUnpack(t *testing.T) {
 	}
 }
 
+func TestRawNameWithDotsUnpack(t *testing.T) {
+	name := []byte{3, 'w', '.', 'w', 2, 'g', 'o', 3, 'd', 'e', 'v', 0}
+	var n Name
+	off, err := n.unpack(name, 0, true)
+	if err != nil {
+		t.Fatalf("unpacking raw name with dot: got %v, want nil", err)
+	}
+	if !n.IsRaw {
+		t.Error("IsRaw is false, want true")
+	}
+	if off != len(name) {
+		t.Errorf("got offset %d, want %d", off, len(name))
+	}
+	if int(n.Length) != len(name) {
+		t.Errorf("got length %d, want %d", n.Length, len(name))
+	}
+	if !bytes.Equal(n.Data[:n.Length], name) {
+		t.Errorf("got name %q, want %q", n.Data[:n.Length], name)
+	}
+}
+
 func TestRawNameString(t *testing.T) {
 	var n Name
 	off, err := n.unpack([]byte("\x04test\x00"), 0, true)
